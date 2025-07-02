@@ -47,8 +47,14 @@ def filtrar_e_classificar(df, vazao, pressao, top_n=5):
     if df is None:
         return pd.DataFrame()
 
+    margem = 0.06  # 2,5% de tolerância para a pressão
+
     df_filtrado = df[
-        (df["Vazão (m³/h)"] >= vazao) & (df["Pressão (mca)"] >= pressao)
+        (
+            (df["Vazão (m³/h)"] >= vazao) &
+            (df["Pressão (mca)"] >= pressao * (1 - margem)) &
+            (df["Pressão (mca)"] <= pressao * (1 + margem))
+        )
     ].copy()
 
     if df_filtrado.empty:
@@ -69,11 +75,12 @@ def filtrar_e_classificar(df, vazao, pressao, top_n=5):
 
     df_resultado = (
         df_filtrado
-        .groupby(["Modelo", "Motor (HP)"], group_keys=False)
+        .groupby("Motor (HP)", group_keys=False)
         .apply(desempate)
         .reset_index(drop=True)
         .sort_values(by=["Motor (HP)", "Rendimento (%)"], ascending=[True, False])
     )
+
     return df_resultado.head(top_n)
 
 def selecionar_bombas(df, vazao_desejada, pressao_desejada, top_n=5):
@@ -81,7 +88,7 @@ def selecionar_bombas(df, vazao_desejada, pressao_desejada, top_n=5):
     # 1. Tenta encontrar uma bomba única
     resultado_unico = filtrar_e_classificar(df, vazao_desejada, pressao_desejada, top_n)
 
-    if not resultado_unico.empty and resultado_unico["Rendimento (%)"].max() > 60:
+    if not resultado_unico.empty and resultado_unico.iloc[0]["Rendimento (%)"] > 50:
         return resultado_unico, "unica"
 
     # 2. Se não encontrou ou o rendimento é baixo, tenta em paralelo
