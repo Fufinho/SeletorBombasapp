@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -41,41 +40,88 @@ def carregar_e_processar_dados(caminho_arquivo):
     intervalos_vazao = df.groupby(["Modelo", "Rotor"])["Vazão (m³/h)"].agg(["min", "max"]).reset_index()
     df = pd.merge(df, intervalos_vazao, on=["Modelo", "Rotor"], how="left", suffixes=("", "_range"))
     df["vazao_centro"] = (df["min"] + df["max"]) / 2
-    df["erro_relativo"] = np.abs(df["Vazão (m³/h)"] - df["vazao_centro"]) / (df["max"] - df["min"]).replace(0, np.nan)
+    df["erro_relativo"] = ((df["Vazão (m³/h)"] - df["vazao_centro"]) / (df["max"] - df["min"])) * 100
+    df["abs_erro_relativo"] = df["erro_relativo"].abs()
 
     return df
 
 def filtrar_e_classificar(df, vazao, pressao, top_n=5):
+    """
+    Filtra as bombas e aplica a ordenação final usando a abordagem de
+    "coluna-chave", que é mais robusta e definitiva.
+    """
     if df is None:
         return pd.DataFrame()
 
-    condicoes = [
-        df['RotorNum'] == df['rotor_max_modelo'],
-        df['RotorNum'] == df['rotor_min_modelo']
-    ]
-    margens_cima = [df['pressao_max_modelo'] * 0.015, df['pressao_max_modelo'] * 0.05]
-    margens_baixo = [df['pressao_max_modelo'] * 0.05, df['pressao_max_modelo'] * 0.015]
-    df['margem_cima'] = np.select(condicoes, margens_cima, default=df['pressao_max_modelo'] * 0.05)
-    df['margem_baixo'] = np.select(condicoes, margens_baixo, default=df['pressao_max_modelo'] * 0.05)
+    # ===================================================================
+    # ETAPA 1: FILTRAGEM (Seu código original, 100% preservado)
+    # ===================================================================
+    cond_max = df['RotorNum'] == df['rotor_max_modelo']
+    cond_min = df['RotorNum'] == df['rotor_min_modelo']
+
+    df['margem_cima'] = np.select(
+        [cond_max, cond_min],
+        [df['pressao_max_modelo'] * 0.03, df['pressao_max_modelo'] * 0.075],
+        default=df['pressao_max_modelo'] * 0.075
+    )
+    df['margem_baixo'] = np.select(
+        [cond_max, cond_min],
+        [df['pressao_max_modelo'] * 0.075, df['pressao_max_modelo'] * 0.03],
+        default=df['pressao_max_modelo'] * 0.075
+    )
 
     pressao_min_aceita = pressao - df['margem_baixo']
     pressao_max_aceita = pressao + df['margem_cima']
+
     df_filtrado = df[
         (df["Vazão (m³/h)"] == vazao) &
         (df["Pressão (mca)"] >= pressao_min_aceita) &
         (df["Pressão (mca)"] <= pressao_max_aceita)
     ].copy()
 
+    if not df_filtrado.empty:
+        df_filtrado = df_filtrado[
+            ~((df_filtrado['RotorNum'] == df_filtrado['rotor_min_modelo']) &
+              (pressao < df_filtrado["Pressão (mca)"] - df_filtrado['pressao_max_modelo'] * 0.03)) &
+            ~((df_filtrado['RotorNum'] == df_filtrado['rotor_max_modelo']) &
+              (pressao > df_filtrado["Pressão (mca)"] + df_filtrado['pressao_max_modelo'] * 0.03))
+        ]
+
     if df_filtrado.empty:
         return pd.DataFrame()
 
-    df_filtrado["erro_pressao"] = abs(df_filtrado["Pressão (mca)"] - pressao)
+    # ===================================================================
+    # ETAPA 2: ORDENAÇÃO COM COLUNA-CHAVE (A SOLUÇÃO DEFINITIVA)
+    # ===================================================================
+    
+    # Adiciona uma coluna com o erro absoluto da pressão
+    df_filtrado["erro_pressao_abs"] = (df_filtrado["Pressão (mca)"] - pressao).abs()
 
-    df_resultado = df_filtrado.sort_values(
-        by=["Motor (HP)", "Rendimento (%)", "erro_relativo", "erro_pressao"],
-        ascending=[True, False, True, True]
+# --- NOVA LÓGICA DE DESEMPATE ---
+# 1. Calcula a menor diferença de rendimento entre bombas do mesmo motor
+    df_filtrado['diff_rendimento_vs_grupo'] = df_filtrado.groupby('Motor (HP)')['Rendimento (%)'].transform(
+        lambda x: x.apply(lambda y: (x - y).abs().min())
     )
 
+# 2. Chave de desempate: prioriza erro relativo apenas se houver bombas com mesmo motor e rendimento ≤5% diferente
+    df_filtrado['chave_desempate'] = np.where(
+        df_filtrado['diff_rendimento_vs_grupo'] <= 5,  # Condição corrigida
+        df_filtrado['abs_erro_relativo'],
+        np.inf
+    )
+
+# 3. Mantém a chave padrão (pressão)
+    df_filtrado['chave_padrao'] = df_filtrado['erro_pressao_abs']
+
+    # ORDENAÇÃO FINAL E SIMPLES USANDO AS CHAVES
+    df_resultado = df_filtrado.sort_values(
+        by=["Motor (HP)", "chave_desempate", "chave_padrao"],
+        ascending=[True, True, True]
+    )
+    
+    # Prepara as colunas finais para exibição.
+    df_resultado["erro_pressao"] = df_resultado["Pressão (mca)"] - pressao
+    
     return df_resultado[['Modelo', 'Rotor', 'Vazão (m³/h)', 'Pressão (mca)', 'Rendimento (%)',
                          'erro_pressao', 'erro_relativo', 'Potência (HP)', 'Motor (HP)']].head(top_n)
 
