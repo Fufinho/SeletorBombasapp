@@ -379,14 +379,20 @@ if st.session_state.calculo_iniciado:
         
         # ----------------- RESULTADO OFICIAL -----------------
         st.header("2. Resultado do Preço Oficial (Baseado no Excel)")
+
+        # Pega o ID da memória para exibição
+        id_bomba_oficial = dados["id_bomba"]
+
+        # A linha abaixo foi adicionada para mostrar o ID
+        st.info(f"**ID da Bomba Selecionada:** {id_bomba_oficial}")
+
         lucro_oficial = preco_final_oficial - dados["custo_atual"] if dados["custo_atual"] > 0 else 0
         lucro_pct_oficial = (lucro_oficial / dados["custo_atual"]) * 100 if dados["custo_atual"] > 0 else 0
-        
+
         res_col1, res_col2, res_col3 = st.columns(3)
         res_col1.metric("Preço Final de Venda", f"R$ {preco_final_oficial:,.2f}")
         res_col2.metric("Lucro", f"R$ {lucro_oficial:,.2f}", delta_color="off")
         res_col3.metric("Margem de Lucro", f"{lucro_pct_oficial:.1f}%", delta_color="off")
-
         # ----------------- CAIXA DE INFORMAÇÃO -----------------
         with st.container(border=True):
             st.subheader("📝 Fatores Utilizados no Cálculo Oficial")
