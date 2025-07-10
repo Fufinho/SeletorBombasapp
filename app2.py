@@ -242,9 +242,13 @@ def carregar_dados():
         st.error(f"Ocorreu um erro ao carregar o Excel: {e}")
         return None, None
 
+def criar_chave(m, d, p, r, f):
+    s_r = '' if str(r).upper() == 'NAN' else str(r)
+    s_f = '' if str(f).upper() == 'NAN' else str(f)
+    return (str(m) + str(int(d)) + str(int(p)) + s_r + s_f).upper().replace(' ', '')
+
 df_bombas, df_markups = carregar_dados()
 
-# Inicializa o "post-it" (session_state) se ele não existir
 if 'calculo_iniciado' not in st.session_state:
     st.session_state.calculo_iniciado = False
 if 'dados_calculo' not in st.session_state:
@@ -255,12 +259,9 @@ if df_bombas is not None:
     st.header("1. Selecione a Configuração da Bomba")
     
     col_sel1, col_sel2, col_sel3 = st.columns(3)
-    with col_sel1:
-        modelo = st.selectbox("Modelo", sorted(df_bombas["MODELO"].dropna().unique()))
-    with col_sel2:
-        diametro = st.selectbox("Diâmetro", sorted(df_bombas[df_bombas["MODELO"] == modelo]["DIAMETRO"].dropna().unique()))
-    with col_sel3:
-        potencia = st.selectbox("Potência", sorted(df_bombas[(df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro)]["POTÊNCIA"].dropna().unique()))
+    with col_sel1: modelo = st.selectbox("Modelo", sorted(df_bombas["MODELO"].dropna().unique()))
+    with col_sel2: diametro = st.selectbox("Diâmetro", sorted(df_bombas[df_bombas["MODELO"] == modelo]["DIAMETRO"].dropna().unique()))
+    with col_sel3: potencia = st.selectbox("Potência", sorted(df_bombas[(df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro)]["POTÊNCIA"].dropna().unique()))
 
     col_sel4, col_sel5 = st.columns(2)
     with col_sel4: rotor = st.selectbox("Material Rotor", df_bombas["MATERIAL ROTOR"].dropna().unique())
@@ -279,178 +280,115 @@ if df_bombas is not None:
     
     st.divider()
     
-    # Botão principal que INICIA o cálculo e liga a "memória"
     if st.button("Calcular Preço e Simular", type="primary", use_container_width=True):
         st.session_state.calculo_iniciado = True
-        
         try:
-            # --- LÓGICA DE CÁLCULO INICIAL (só roda quando o botão é clicado) ---
-            filtro_atual = (
-                (df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro) & (df_bombas["POTÊNCIA"] == potencia) &
-                (df_bombas["MATERIAL ROTOR"] == rotor) & (df_bombas["MATERIAL DIFUSOR"] == difusor) &
-                (df_bombas["EQUALIZADOR DE PRESSÃO"] == equalizador) & (df_bombas["SENSOR TEMP MOTOR"] == sensor_motor) &
-                (df_bombas["SENSOR DE NIVEL"] == sensor_nivel) & (df_bombas["SENSOR TEMP MANCAL"] == sensor_mancal) &
-                (df_bombas["SENSOR VIBRAÇÃO"] == sensor_vibracao) & (df_bombas["CRIVO"] == crivo)
-            )
+            filtro_atual = ( (df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro) & (df_bombas["POTÊNCIA"] == potencia) & (df_bombas["MATERIAL ROTOR"] == rotor) & (df_bombas["MATERIAL DIFUSOR"] == difusor) & (df_bombas["EQUALIZADOR DE PRESSÃO"] == equalizador) & (df_bombas["SENSOR TEMP MOTOR"] == sensor_motor) & (df_bombas["SENSOR DE NIVEL"] == sensor_nivel) & (df_bombas["SENSOR TEMP MANCAL"] == sensor_mancal) & (df_bombas["SENSOR VIBRAÇÃO"] == sensor_vibracao) & (df_bombas["CRIVO"] == crivo) )
             linha_bomba_atual = df_bombas[filtro_atual]
             potencia_max = df_bombas[(df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro)]["POTÊNCIA"].max()
-            
-            filtro_ref = (
-                (df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro) & (df_bombas["POTÊNCIA"] == potencia_max) &
-                (df_bombas["MATERIAL ROTOR"] == rotor) & (df_bombas["MATERIAL DIFUSOR"] == difusor) &
-                (df_bombas["EQUALIZADOR DE PRESSÃO"] == equalizador) & (df_bombas["SENSOR TEMP MOTOR"] == sensor_motor) &
-                (df_bombas["SENSOR DE NIVEL"] == sensor_nivel) & (df_bombas["SENSOR TEMP MANCAL"] == sensor_mancal) &
-                (df_bombas["SENSOR VIBRAÇÃO"] == sensor_vibracao) & (df_bombas["CRIVO"] == crivo)
-            )
+            filtro_ref = ( (df_bombas["MODELO"] == modelo) & (df_bombas["DIAMETRO"] == diametro) & (df_bombas["POTÊNCIA"] == potencia_max) & (df_bombas["MATERIAL ROTOR"] == rotor) & (df_bombas["MATERIAL DIFUSOR"] == difusor) & (df_bombas["EQUALIZADOR DE PRESSÃO"] == equalizador) & (df_bombas["SENSOR TEMP MOTOR"] == sensor_motor) & (df_bombas["SENSOR DE NIVEL"] == sensor_nivel) & (df_bombas["SENSOR TEMP MANCAL"] == sensor_mancal) & (df_bombas["SENSOR VIBRAÇÃO"] == sensor_vibracao) & (df_bombas["CRIVO"] == crivo) )
             linha_ref = df_bombas[filtro_ref]
-            
             if linha_ref.empty:
                 st.error(f"ERRO CRÍTICO: Custo da bomba de referência (Potência {int(potencia_max)} HP) não encontrado.")
-                st.session_state.calculo_iniciado = False
-                st.stop()
-            
-            def criar_chave(m, d, p, r, f):
-                return (str(m) + str(int(d)) + str(int(p)) + str(r) + str(f)).upper().replace(' ', '')
-            
+                st.session_state.calculo_iniciado = False; st.stop()
             chave_markup_busca = criar_chave(modelo, diametro, potencia_max, rotor, difusor)
             linha_markup = df_markups[df_markups["CHAVE_BUSCA"] == chave_markup_busca]
-
             if linha_markup.empty:
                 st.error(f"ERRO CRÍTICO: Markup não encontrado para a bomba de referência. Chave: `{chave_markup_busca}`")
-                st.session_state.calculo_iniciado = False
-                st.stop()
+                st.session_state.calculo_iniciado = False; st.stop()
+            st.session_state.dados_calculo = { "custo_atual": linha_bomba_atual["VALOR"].values[0] if not linha_bomba_atual.empty else 0, "id_bomba": linha_bomba_atual["ID"].values[0] if not linha_bomba_atual.empty else "Não Cadastrado", "custo_referencia": linha_ref["VALOR"].values[0], "markup_excel": linha_markup["MARKUP"].values[0], "potencia": potencia, "potencia_max": potencia_max, "modelo": modelo, "diametro": diametro, "rotor": rotor, "difusor": difusor }
+        except Exception as e:
+            st.error(f"Ocorreu um erro durante o cálculo inicial: {e}"); st.session_state.calculo_iniciado = False
 
-            # Guarda os dados essenciais na "memória"
-            st.session_state.dados_calculo = {
-                "custo_atual": linha_bomba_atual["VALOR"].values[0] if not linha_bomba_atual.empty else 0,
-                "id_bomba": linha_bomba_atual["ID"].values[0] if not linha_bomba_atual.empty else "Não Cadastrado",
-                "custo_referencia": linha_ref["VALOR"].values[0],
-                "markup_excel": linha_markup["MARKUP"].values[0],
-                "potencia": potencia,
-                "potencia_max": potencia_max,
-                "modelo": modelo, "diametro": diametro, "rotor": rotor, "difusor": difusor
-            }
-            
-            reducao_excel = 0.0
-            if potencia < potencia_max:
-                chave_reducao_busca = criar_chave(modelo, diametro, potencia, 'nan', 'nan')
+    if st.session_state.calculo_iniciado:
+        try:
+            dados = st.session_state.dados_calculo
+            preco_referencia_oficial = dados["custo_referencia"] * dados["markup_excel"]
+            reducao_oficial = 0.0
+            if dados["potencia"] < dados["potencia_max"]:
+                chave_reducao_busca = criar_chave(dados['modelo'], dados['diametro'], dados['potencia'], 'nan', 'nan')
                 linha_reducao = df_markups[df_markups["CHAVE_BUSCA"] == chave_reducao_busca]
-                if not linha_reducao.empty:
-                    reducao_excel = linha_reducao["REDUÇÃO(%)"].values[0]
-            st.session_state.dados_calculo["reducao_excel"] = reducao_excel
+                if not linha_reducao.empty: reducao_oficial = linha_reducao["REDUÇÃO(%)"].values[0]
+            preco_final_oficial = preco_referencia_oficial * (1 - reducao_oficial / 100)
+            
+            st.header("2. Resultado do Preço Oficial (Baseado no Excel)")
+            st.info(f"**ID da Bomba Selecionada:** {dados['id_bomba']}")
+            lucro_oficial = preco_final_oficial - dados["custo_atual"] if dados["custo_atual"] > 0 else 0
+            lucro_pct_oficial = (lucro_oficial / dados["custo_atual"]) * 100 if dados["custo_atual"] > 0 else 0
+            res_col1, res_col2, res_col3 = st.columns(3)
+            res_col1.metric("Preço Final de Venda", f"R$ {preco_final_oficial:,.2f}")
+            res_col2.metric("Lucro", f"R$ {lucro_oficial:,.2f}", delta_color="off")
+            res_col3.metric("Margem de Lucro", f"{lucro_pct_oficial:.1f}%", delta_color="off")
+            
+            with st.container(border=True):
+                st.subheader("📝 Fatores Utilizados no Cálculo Oficial")
+                info_col1, info_col2 = st.columns(2)
+                info_col1.metric("Markup da Referência", f"{dados['markup_excel']:.2f}x")
+                if dados["potencia"] < dados["potencia_max"]: info_col2.metric("Redução Aplicada", f"{reducao_oficial:.1f}%")
+                else: info_col2.info("Esta é a bomba de referência, sem redução.")
+            st.divider()
+
+            st.header("3. Simulador de Precificação em Cascata")
+            df_familia = df_bombas[(df_bombas["MODELO"] == dados["modelo"]) & (df_bombas["DIAMETRO"] == dados["diametro"]) & (df_bombas["MATERIAL ROTOR"] == dados["rotor"]) & (df_bombas["MATERIAL DIFUSOR"] == dados["difusor"])]
+            potencias_familia = sorted(df_familia["POTÊNCIA"].unique())
+            
+            bombas_para_simular = {}
+            potencia_max = dados["potencia_max"]
+            potencia_selecionada = dados["potencia"]
+            bombas_para_simular[potencia_max] = "Referência"
+            if potencia_selecionada != potencia_max: bombas_para_simular[potencia_selecionada] = "Selecionada"
+            try:
+                idx_atual = potencias_familia.index(potencia_selecionada)
+                if idx_atual + 1 < len(potencias_familia):
+                    potencia_seguinte = potencias_familia[idx_atual + 1]
+                    if potencia_seguinte not in bombas_para_simular: bombas_para_simular[potencia_seguinte] = "Acima da Selecionada"
+            except ValueError: pass
+            potencias_ordenadas = sorted(bombas_para_simular.keys(), reverse=True)
+            
+            resultados_simulacao = []
+            preco_ref_simulado = 0
+
+            for p in potencias_ordenadas:
+                tipo = bombas_para_simular[p]
+                with st.container(border=True):
+                    st.subheader(f"Simulador para Bomba {p} HP ({tipo})")
+                    custo_bomba_sim = df_familia[df_familia["POTÊNCIA"] == p]["VALOR"].values[0] if not df_familia[df_familia["POTÊNCIA"] == p].empty else 0
+                    
+                    if p == potencia_max:
+                        markup_padrao = dados["markup_excel"]
+                        markup_simulado = st.number_input("Testar Markup Multiplicador", value=markup_padrao, min_value=1.0, step=0.05, format="%.2f", key=f"markup_{p}")
+                        preco_ref_simulado = dados["custo_referencia"] * markup_simulado
+                        preco_final_simulado = preco_ref_simulado
+                        # Guarda o markup para o resumo
+                        resultados_simulacao.append({"Potência (HP)": p, "Tipo": tipo, "Preço Simulado": f"R$ {preco_final_simulado:,.2f}", "Custo": f"R$ {custo_bomba_sim:,.2f}" if custo_bomba_sim > 0 else "-", "Markup/Redução": f"Markup: {markup_simulado:.2f}x"})
+                    else:
+                        chave_reducao = criar_chave(dados['modelo'], dados['diametro'], p, 'nan', 'nan')
+                        linha_reducao = df_markups[df_markups["CHAVE_BUSCA"] == chave_reducao]
+                        reducao_padrao = linha_reducao["REDUÇÃO(%)"].values[0] if not linha_reducao.empty else 0.0
+                        reducao_simulada = st.number_input("Testar Redução (%)", value=reducao_padrao, min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key=f"reducao_{p}")
+                        preco_final_simulado = preco_ref_simulado * (1 - reducao_simulada / 100)
+                        # Guarda a redução para o resumo
+                        resultados_simulacao.append({"Potência (HP)": p, "Tipo": tipo, "Preço Simulado": f"R$ {preco_final_simulado:,.2f}", "Custo": f"R$ {custo_bomba_sim:,.2f}" if custo_bomba_sim > 0 else "-", "Markup/Redução": f"Redução: {reducao_simulada:.1f}%"})
+
+                    lucro_simulado = preco_final_simulado - custo_bomba_sim if custo_bomba_sim > 0 else 0
+                    margem_simulada = (lucro_simulado / custo_bomba_sim) * 100 if custo_bomba_sim > 0 else 0
+                    
+                    sim_res_col1, sim_res_col2, sim_res_col3 = st.columns(3)
+                    sim_res_col1.metric("Preço Simulado", f"R$ {preco_final_simulado:,.2f}")
+                    sim_res_col2.metric("Lucro Simulado", f"R$ {lucro_simulado:,.2f}", delta_color="off")
+                    sim_res_col3.metric("Margem Simulada", f"{margem_simulada:.1f}%", delta_color="off")
+            
+            st.divider()
+            st.subheader("📋 Resumo da Simulação para Copiar")
+            texto_resumo_final = f"Família da Bomba: {dados['modelo']} - {dados['diametro']} | Materiais: {dados['rotor']} / {dados['difusor']}\n"
+            texto_resumo_final += "="*70 + "\n"
+            resultados_simulacao_ordenados = sorted(resultados_simulacao, key=lambda x: x['Potência (HP)'], reverse=True)
+            for res in resultados_simulacao_ordenados:
+                texto_resumo_final += f"Bomba {res['Potência (HP)']} HP ({res['Tipo']}):\n"
+                texto_resumo_final += f"  - Parâmetro Testado: {res['Markup/Redução']}\n"
+                texto_resumo_final += f"  - Custo: {res['Custo']} | Preço Final: {res['Preço Simulado']}\n"
+            st.code(texto_resumo_final, language="text")
 
         except Exception as e:
-            st.error(f"Ocorreu um erro durante o cálculo: {e}")
-            st.session_state.calculo_iniciado = False
-
-# --- LÓGICA DE EXIBIÇÃO (só roda se a "memória" estiver ligada) ---
-if st.session_state.calculo_iniciado:
-    try:
-        # Pega os dados da "memória"
-        dados = st.session_state.dados_calculo
-        
-        # --- ETAPA DE CÁLCULO OFICIAL ---
-        preco_referencia = dados["custo_referencia"] * dados["markup_excel"]
-        
-        # Lógica de Redução Oficial Corrigida
-        reducao_excel = 0.0 # Começa com 0
-        if dados["potencia"] < dados["potencia_max"]:
-            # Recria a chave de busca para a redução
-            def criar_chave(m, d, p, r, f):
-                s_r = '' if str(r).upper() == 'NAN' else str(r)
-                s_f = '' if str(f).upper() == 'NAN' else str(f)
-                return (str(m) + str(int(d)) + str(int(p)) + s_r + s_f).upper().replace(' ', '')
-            
-            chave_reducao_busca = criar_chave(dados['modelo'], dados['diametro'], dados['potencia'], 'nan', 'nan')
-            
-            # Filtra a linha de redução no dataframe de markups
-            linha_reducao = df_markups[df_markups["CHAVE_BUSCA"] == chave_reducao_busca]
-            
-            # --- PONTO DE DEPURAÇÃO DA REDUÇÃO ---
-            with st.expander("🔍 Detalhes da Busca por Redução (Depuração)"):
-                st.write(f"**Chave de Redução que o Python está procurando:** `{chave_reducao_busca}`")
-                st.write("**Chaves de Redução encontradas no seu Excel (onde o Markup é vazio):**")
-                st.dataframe(df_markups[df_markups['MARKUP'].isna()][['MODELO', 'DIAMETRO', 'POTÊNCIA', 'CHAVE_BUSCA']])
-
-            if not linha_reducao.empty:
-                reducao_excel = linha_reducao["REDUÇÃO(%)"].values[0]
-        
-        preco_final_oficial = preco_referencia * (1 - reducao_excel / 100)
-        
-        # ----------------- RESULTADO OFICIAL -----------------
-        st.header("2. Resultado do Preço Oficial (Baseado no Excel)")
-
-        # Pega o ID da memória para exibição
-        id_bomba_oficial = dados["id_bomba"]
-
-        # A linha abaixo foi adicionada para mostrar o ID
-        st.info(f"**ID da Bomba Selecionada:** {id_bomba_oficial}")
-
-        lucro_oficial = preco_final_oficial - dados["custo_atual"] if dados["custo_atual"] > 0 else 0
-        lucro_pct_oficial = (lucro_oficial / dados["custo_atual"]) * 100 if dados["custo_atual"] > 0 else 0
-
-        res_col1, res_col2, res_col3 = st.columns(3)
-        res_col1.metric("Preço Final de Venda", f"R$ {preco_final_oficial:,.2f}")
-        res_col2.metric("Lucro", f"R$ {lucro_oficial:,.2f}", delta_color="off")
-        res_col3.metric("Margem de Lucro", f"{lucro_pct_oficial:.1f}%", delta_color="off")
-        # ----------------- CAIXA DE INFORMAÇÃO -----------------
-        with st.container(border=True):
-            st.subheader("📝 Fatores Utilizados no Cálculo Oficial")
-            info_col1, info_col2 = st.columns(2)
-            info_col1.metric("Markup da Referência", f"{dados['markup_excel']:.2f}x")
-            if dados["potencia"] < dados["potencia_max"]:
-                info_col2.metric("Redução Aplicada", f"{reducao_excel:.1f}%")
-            else:
-                info_col2.info("Esta é a bomba de referência, sem redução.")
-        
-        st.divider()
-        
-        # ----------------- CAIXA DE SIMULAÇÃO (AGORA INTERATIVA) -----------------
-        st.header("3. Simulador de Markups")
-        sim_col1, sim_col2 = st.columns(2)
-        with sim_col1:
-            markup_simulado = st.number_input("Testar novo Markup", min_value=1.0, value=dados["markup_excel"], step=0.05, format="%.2f")
-        with sim_col2:
-            reducao_simulada = st.number_input("Testar nova Redução (%)", min_value=0.0, max_value=100.0, value=reducao_excel, step=0.5, format="%.1f")
-
-        # Recalcula com os valores do simulador (LÓGICA CORRIGIDA)
-        preco_ref_simulado = dados["custo_referencia"] * markup_simulado
-        
-        if dados["potencia"] < dados["potencia_max"]:
-            preco_final_simulado = preco_ref_simulado * (1 - reducao_simulada / 100)
-        else:
-            # Se for a bomba de referência, não aplica redução
-            preco_final_simulado = preco_ref_simulado
-        
-        lucro_simulado = preco_final_simulado - dados["custo_atual"] if dados["custo_atual"] > 0 else 0
-        lucro_pct_simulado = (lucro_simulado / dados["custo_atual"]) * 100 if dados["custo_atual"] > 0 else 0
-        
-        with st.container(border=True):
-            st.subheader("📈 Resultado da Simulação")
-            sim_res_col1, sim_res_col2, sim_res_col3 = st.columns(3)
-            sim_res_col1.metric("Novo Preço de Venda", f"R$ {preco_final_simulado:,.2f}")
-            sim_res_col2.metric("Novo Lucro", f"R$ {lucro_simulado:,.2f}", delta_color="off")
-            sim_res_col3.metric("Nova Margem", f"{lucro_pct_simulado:.1f}%", delta_color="off")
-
-            # --- BOTÃO DE COPIAR ---
-            st.divider()
-            texto_resumo = f"""
-=================================
-Resumo da Simulação de Preço
-=================================
-Bomba: {dados['modelo']} - {dados['diametro']} - {dados['potencia']} HP
-Materiais: {dados['rotor']} / {dados['difusor']}
-Custo de Produção: R$ {dados['custo_atual']:,.2f}
-
--- Parâmetros Testados --
-Markup Multiplicador: {markup_simulado:.2f}x
-Redução Aplicada: {reducao_simulada:.1f}%
-
--- Resultado da Simulação --
-Novo Preço de Venda: R$ {preco_final_simulado:,.2f}
-Novo Lucro: R$ {lucro_simulado:,.2f} ({lucro_pct_simulado:.1f}%)
-"""
-            st.code(texto_resumo, language="text")
-    
-    except Exception as e:
-        st.error(f"Ocorreu um erro inesperado durante a exibição dos resultados: {e}")
+            st.error(f"Ocorreu um erro inesperado durante a exibição dos resultados: {e}")
+            st.exception(e)
