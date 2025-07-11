@@ -3,25 +3,33 @@ import pandas as pd
 import numpy as np
 import re
 
-# --- LÓGICA DO SCRIPT REFINADA ---
+# --- FUNÇÕES GLOBAIS E CONSTANTES ---
+MOTORES_PADRAO = np.array([
+    15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 175, 200, 250, 300,
+    350, 400, 450, 500, 550, 600
+])
 
+def encontrar_motor_final(potencia_real):
+    """Encontra o próximo motor padrão disponível a partir de uma potência."""
+    if pd.isna(potencia_real):
+        return np.nan
+    candidatos = MOTORES_PADRAO[MOTORES_PADRAO >= potencia_real]
+    return candidatos.min() if len(candidatos) > 0 else np.nan
+
+# --- LÓGICA DO SCRIPT REFINADA ---
 @st.cache_data
 def carregar_e_processar_dados(caminho_arquivo):
     try:
         df = pd.read_excel(caminho_arquivo)
+        df.columns = df.columns.str.strip().str.upper()
     except FileNotFoundError:
         st.error(f"Erro: Arquivo '{caminho_arquivo}' não encontrado.")
         return None
+    except Exception as e:
+        st.error(f"Ocorreu um erro ao ler o Excel: {e}")
+        return None
 
-    motores_padrao = np.array([
-        15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 175, 200, 250, 300,
-        350, 400, 450, 500, 550, 600
-    ])
-    def encontrar_motor_final(potencia_real):
-        candidatos = motores_padrao[motores_padrao >= potencia_real]
-        return candidatos.min() if len(candidatos) > 0 else np.nan
-
-    df["Motor (HP)"] = df["Potência (HP)"].apply(encontrar_motor_final)
+    df["MOTOR PADRÃO (CV)"] = df["POTÊNCIA (HP)"].apply(encontrar_motor_final)
 
     def extrair_rotor_num(rotor_str):
         match = re.match(r"(\d+)(?:\s*\((\d+)°\))?", str(rotor_str))
@@ -31,151 +39,132 @@ def carregar_e_processar_dados(caminho_arquivo):
             return base + grau / 100
         return np.nan
 
-    df["RotorNum"] = df["Rotor"].apply(extrair_rotor_num)
+    df["ROTORNUM"] = df["ROTOR"].apply(extrair_rotor_num)
+    df["ROTOR_MIN_MODELO"] = df.groupby("MODELO")["ROTORNUM"].transform("min")
+    df["ROTOR_MAX_MODELO"] = df.groupby("MODELO")["ROTORNUM"].transform("max")
+    df["PRESSAO_MAX_MODELO"] = df.groupby("MODELO")["PRESSÃO (MCA)"].transform("max")
+    df['POTENCIA_MAX_FAMILIA'] = df.groupby('MODELO')['POTÊNCIA (HP)'].transform('max')
 
-    df["rotor_min_modelo"] = df.groupby("Modelo")["RotorNum"].transform("min")
-    df["rotor_max_modelo"] = df.groupby("Modelo")["RotorNum"].transform("max")
-    df["pressao_max_modelo"] = df.groupby("Modelo")["Pressão (mca)"].transform("max")
-
-    intervalos_vazao = df.groupby(["Modelo", "Rotor"])["Vazão (m³/h)"].agg(["min", "max"]).reset_index()
-    df = pd.merge(df, intervalos_vazao, on=["Modelo", "Rotor"], how="left", suffixes=("", "_range"))
-    df["vazao_centro"] = (df["min"] + df["max"]) / 2
-    df["erro_relativo"] = ((df["Vazão (m³/h)"] - df["vazao_centro"]) / (df["max"] - df["min"])) * 100
-    df["abs_erro_relativo"] = df["erro_relativo"].abs()
+    intervalos_vazao = df.groupby(["MODELO", "ROTOR"])["VAZÃO (M³/H)"].agg(["min", "max"]).reset_index()
+    df = pd.merge(df, intervalos_vazao, on=["MODELO", "ROTOR"], how="left", suffixes=("", "_range"))
+    df["VAZAO_CENTRO"] = (df["min"] + df["max"]) / 2
+    df["ERRO_RELATIVO"] = ((df["VAZÃO (M³/H)"] - df["VAZAO_CENTRO"]) / (df["max"] - df["min"])) * 100
+    df["ABS_ERRO_RELATIVO"] = df["ERRO_RELATIVO"].abs()
 
     return df
 
-def filtrar_e_classificar(df, vazao, pressao, top_n=5):
-    """
-    Filtra as bombas e aplica a ordenação final usando a abordagem de
-    "coluna-chave", que é mais robusta e definitiva.
-    """
-    if df is None:
-        return pd.DataFrame()
+def filtrar_e_classificar(df, vazao, pressao, top_n=5, fator_limitador=0.025, limite_desempate_rendimento=3):
+    if df is None: return pd.DataFrame()
 
-    # ===================================================================
-    # ETAPA 1: FILTRAGEM  código original, 100% preservado
-    # ===================================================================
-    cond_max = df['RotorNum'] == df['rotor_max_modelo']
-    cond_min = df['RotorNum'] == df['rotor_min_modelo']
-
-    df['margem_cima'] = np.select(
-        [cond_max, cond_min],
-        [df['pressao_max_modelo'] * 0.03, df['pressao_max_modelo'] * 0.075],
-        default=df['pressao_max_modelo'] * 0.075
-    )
-    df['margem_baixo'] = np.select(
-        [cond_max, cond_min],
-        [df['pressao_max_modelo'] * 0.075, df['pressao_max_modelo'] * 0.03],
-        default=df['pressao_max_modelo'] * 0.075
-    )
-
+    # ETAPA 1: FILTRAGEM (lógica original preservada)
+    cond_max = df['ROTORNUM'] == df['ROTOR_MAX_MODELO']
+    cond_min = df['ROTORNUM'] == df['ROTOR_MIN_MODELO']
+    df['margem_cima'] = np.select([cond_max, cond_min], [df['PRESSAO_MAX_MODELO'] * 0.03, df['PRESSAO_MAX_MODELO'] * 0.1], default=df['PRESSAO_MAX_MODELO'] * 0.1)
+    df['margem_baixo'] = np.select([cond_max, cond_min], [df['PRESSAO_MAX_MODELO'] * 0.1, df['PRESSAO_MAX_MODELO'] * 0.03], default=df['PRESSAO_MAX_MODELO'] * 0.1)
     pressao_min_aceita = pressao - df['margem_baixo']
     pressao_max_aceita = pressao + df['margem_cima']
-
-    df_filtrado = df[
-        (df["Vazão (m³/h)"] == vazao) &
-        (df["Pressão (mca)"] >= pressao_min_aceita) &
-        (df["Pressão (mca)"] <= pressao_max_aceita)
-    ].copy()
-
+    df_filtrado = df[(df["VAZÃO (M³/H)"] == vazao) & (df["PRESSÃO (MCA)"] >= pressao_min_aceita) & (df["PRESSÃO (MCA)"] <= pressao_max_aceita)].copy()
     if not df_filtrado.empty:
-        df_filtrado = df_filtrado[
-            ~((df_filtrado['RotorNum'] == df_filtrado['rotor_min_modelo']) &
-              (pressao < df_filtrado["Pressão (mca)"] - df_filtrado['pressao_max_modelo'] * 0.03)) &
-            ~((df_filtrado['RotorNum'] == df_filtrado['rotor_max_modelo']) &
-              (pressao > df_filtrado["Pressão (mca)"] + df_filtrado['pressao_max_modelo'] * 0.03))
-        ]
+        df_filtrado = df_filtrado[~((df_filtrado['ROTORNUM'] == df_filtrado['ROTOR_MIN_MODELO']) & (pressao < df_filtrado["PRESSÃO (MCA)"] - df_filtrado['PRESSAO_MAX_MODELO'] * 0.03)) & ~((df_filtrado['ROTORNUM'] == df_filtrado['ROTOR_MAX_MODELO']) & (pressao > df_filtrado["PRESSÃO (MCA)"] + df_filtrado['PRESSAO_MAX_MODELO'] * 0.03))]
+    if df_filtrado.empty: return pd.DataFrame()
 
-    if df_filtrado.empty:
-        return pd.DataFrame()
+    # ETAPA 2: CÁLCULO DA POTÊNCIA CORRIGIDA
+    df_filtrado["ERRO_PRESSAO"] = df_filtrado["PRESSÃO (MCA)"] - pressao
+    if pressao > 0:
+        df_filtrado["PERC_ERRO_PRESSAO"] = df_filtrado["ERRO_PRESSAO"] / pressao
+    else:
+        df_filtrado["PERC_ERRO_PRESSAO"] = 0
+    ajuste_bruto = df_filtrado["POTÊNCIA (HP)"] * df_filtrado["PERC_ERRO_PRESSAO"]
+    limite_seguranca = df_filtrado['POTENCIA_MAX_FAMILIA'] * fator_limitador
+    ajuste_final = np.clip(ajuste_bruto, -limite_seguranca, limite_seguranca)
+    df_filtrado["POTÊNCIA CORRIGIDA (HP)"] = df_filtrado["POTÊNCIA (HP)"] - ajuste_final
+    df_filtrado["MOTOR FINAL (CV)"] = df_filtrado["POTÊNCIA CORRIGIDA (HP)"].apply(encontrar_motor_final)
 
     # ===================================================================
-    # ETAPA 2: ORDENAÇÃO COM COLUNA-CHAVE 
+    # ETAPA 3: ORDENAÇÃO COM A HIERARQUIA CORRETA
     # ===================================================================
     
-    # Adiciona uma coluna com o erro absoluto da pressão
-    df_filtrado["erro_pressao_abs"] = (df_filtrado["Pressão (mca)"] - pressao).abs()
-
-# --- NOVA LÓGICA DE DESEMPATE ---
-# 1. Calcula a menor diferença de rendimento entre bombas do mesmo motor
-    df_filtrado['diff_rendimento_vs_grupo'] = df_filtrado.groupby('Motor (HP)')['Rendimento (%)'].transform(
-        lambda x: x.apply(lambda y: (x - y).abs().min())
+    # Lógica de desempate por rendimento (sua lógica validada)
+     # Primeiro: ordenar por motor e rendimento (para preparar desempate)
+    df_filtrado = df_filtrado.sort_values(
+        by=["MOTOR FINAL (CV)", "RENDIMENTO (%)"],
+        ascending=[True, False]
     )
 
-# 2. Chave de desempate: prioriza erro relativo apenas se houver bombas com mesmo motor e rendimento ≤5% diferente
-    df_filtrado['chave_desempate'] = np.where(
-        df_filtrado['diff_rendimento_vs_grupo'] <= 5,  # Condição corrigida
-        df_filtrado['abs_erro_relativo'],
-        np.inf
+    # Calcular diferença de rendimento entre modelos consecutivos
+    df_filtrado['DIFF_CONSECUTIVO'] = df_filtrado.groupby('MOTOR FINAL (CV)')['RENDIMENTO (%)'].diff(-1).abs()
+
+    # Criar chave de desempate que considera o limitador
+    df_filtrado['CHAVE_DESEMPATE'] = np.where(
+        df_filtrado['DIFF_CONSECUTIVO'].fillna(np.inf) <= limite_desempate_rendimento,
+        df_filtrado['ABS_ERRO_RELATIVO'],  # Usar erro relativo se diferença pequena
+        np.inf  # Ignorar erro se diferença grande
     )
 
-# 3. Mantém a chave padrão (pressão)
-    df_filtrado['chave_padrao'] = df_filtrado['erro_pressao_abs']
-
-    # ORDENAÇÃO FINAL E SIMPLES USANDO AS CHAVES
+    # Ordenação final hierárquica
     df_resultado = df_filtrado.sort_values(
-        by=["Motor (HP)", "chave_desempate", "chave_padrao"],
-        ascending=[True, True, True]
+        by=[
+            "MOTOR FINAL (CV)",
+            "CHAVE_DESEMPATE",
+            "RENDIMENTO (%)",
+            "POTÊNCIA CORRIGIDA (HP)"
+        ],
+        ascending=[
+            True,   # Motor menor primeiro
+            True,   # Menor erro (ou np.inf por último)
+            False,  # Maior rendimento
+            True    # Menor potência
+        ]
     )
     
-    # Prepara as colunas finais para exibição.
-    df_resultado["erro_pressao"] = df_resultado["Pressão (mca)"] - pressao
-    
-    return df_resultado[['Modelo', 'Rotor', 'Vazão (m³/h)', 'Pressão (mca)', 'Rendimento (%)',
-                         'erro_pressao', 'erro_relativo', 'Potência (HP)', 'Motor (HP)']].head(top_n)
+    colunas_finais = [
+        'MODELO', 'ROTOR', 'VAZÃO (M³/H)', 'PRESSÃO (MCA)', 'ERRO_PRESSAO', 'ERRO_RELATIVO',
+        'RENDIMENTO (%)', 'POTÊNCIA (HP)', 'POTÊNCIA CORRIGIDA (HP)', 'MOTOR FINAL (CV)'
+    ]
+    return df_resultado[colunas_finais].head(top_n)
 
 def selecionar_bombas(df, vazao_desejada, pressao_desejada, top_n=5):
     resultado_unico = filtrar_e_classificar(df, vazao_desejada, pressao_desejada, top_n)
-    if not resultado_unico.empty and resultado_unico.iloc[0]["Rendimento (%)"] > 50:
+    if not resultado_unico.empty and resultado_unico.iloc[0]["RENDIMENTO (%)"] > 50:
         return resultado_unico, "unica"
-
     resultado_paralelo = filtrar_e_classificar(df, vazao_desejada / 2, pressao_desejada, top_n)
     if not resultado_paralelo.empty:
         return resultado_paralelo, "paralelo"
-
     resultado_serie = filtrar_e_classificar(df, vazao_desejada, pressao_desejada / 2, top_n)
     if not resultado_serie.empty:
         return resultado_serie, "serie"
-
     return pd.DataFrame(), "nenhuma"
 
 # INTERFACE STREAMLIT
-
 st.set_page_config(layout="wide")
 st.title("🛠️ Seletor de Bombas Hidráulicas")
-
 df_processado = carregar_e_processar_dados("Todos os dados.xlsx")
-
 if df_processado is not None:
     col1, col2 = st.columns(2)
     with col1:
         st.header("Parâmetros de Entrada")
-        vazao_input = st.number_input("Vazão Desejada (m³/h):", min_value=0.1, value=500.0, step=10.0)
-        pressao_input = st.number_input("Pressão Desejada (mca):", min_value=0.1, value=50.0, step=5.0)
+        vazao_input = st.number_input("Vazão Desejada (m³/h):", min_value=0.1, value=100.0, step=10.0)
+        pressao_input = st.number_input("Pressão Desejada (mca):", min_value=0.1, value=100.0, step=5.0)
 
     buscar = st.button("Buscar Melhor Opção", type="primary", use_container_width=True)
     st.divider()
-
+    
     if buscar:
         with st.spinner("Calculando as melhores opções..."):
             resultado, tipo = selecionar_bombas(df_processado, vazao_input, pressao_input)
-
         st.header("Resultados da Busca")
-        if tipo == "unica":
-            st.success("✅ Solução encontrada com **BOMBA ÚNICA**:")
-        elif tipo == "paralelo":
-            st.warning("⚠️ Nenhuma bomba única com bom rendimento. Alternativa: **DUAS BOMBAS EM PARALELO**:")
-            st.info("A vazão e potência abaixo são POR BOMBA. Vazão total = 2x.")
-        elif tipo == "serie":
-            st.warning("⚠️ Nenhuma opção única ou paralela. Alternativa: **DUAS BOMBAS EM SÉRIE**:")
-            st.info("A pressão abaixo é POR BOMBA. Pressão total = 2x.")
-        else:
-            st.error("❌ Nenhuma bomba encontrada. Tente outros valores.")
-            st.stop()
-
-        st.dataframe(resultado, hide_index=True, use_container_width=True)
+        if tipo == "unica": st.success("✅ Solução encontrada com **BOMBA ÚNICA**:")
+        elif tipo == "paralelo": st.warning("⚠️ Nenhuma bomba única com bom rendimento. Alternativa: **DUAS BOMBAS EM PARALELO**:"); st.info("A vazão e potência abaixo são POR BOMBA. Vazão total = 2x.")
+        elif tipo == "serie": st.warning("⚠️ Nenhuma opção única ou paralela. Alternativa: **DUAS BOMBAS EM SÉRIE**:"); st.info("A pressão abaixo é POR BOMBA. Pressão total = 2x.")
+        else: st.error("❌ Nenhuma bomba encontrada. Tente outros valores."); st.stop()
         
+        resultado_formatado = resultado.copy()
+        for col in ['ERRO_PRESSAO', 'ERRO_RELATIVO', 'RENDIMENTO (%)', 'POTÊNCIA (HP)', 'POTÊNCIA CORRIGIDA (HP)']:
+            if col in resultado_formatado.columns:
+                 resultado_formatado[col] = resultado_formatado[col].map('{:,.2f}'.format)
+        
+        st.dataframe(resultado_formatado, hide_index=True, use_container_width=True)
+
 # ======================= PRECIFICADOR ============================
 
 st.divider()
